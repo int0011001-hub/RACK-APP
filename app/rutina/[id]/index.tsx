@@ -1,0 +1,1114 @@
+import Svg, { Path, Circle, Line as SvgLine, Text as SvgText } from 'react-native-svg';
+import React from 'react';
+import { useState, useCallback } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform,
+} from 'react-native';
+import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { supabase } from '../../../lib/supabase';
+import { useTheme } from '../../../lib/theme';
+
+type Dia = { id: string; nombre: string; orden: number };
+const EJERCICIOS_1RM = new Set(['press banca', 'sentadilla', 'peso muerto', 'press militar']);
+
+type TipoSerie = 'recta' | 'multitramo';
+type Tramo = { id: string; orden: number; kg: string; reps: string };
+type Serie = { id: string; numero_serie: number; tipo_serie: TipoSerie; rir: string; tramos: Tramo[] };
+type Ejercicio = { id: string; nombre: string; series: Serie[] };
+type PuntoProgreso = { fecha: string; valor: number; seriesCount: number };
+const ESCALAS: Record<string, number> = { compacto: 0.85, normal: 1, grande: 1.15 };
+
+const TIPOS_SERIE: { value: TipoSerie; label: string }[] = [
+  { value: 'recta', label: 'Recta' },
+  { value: 'multitramo', label: 'Multi-tramo' },
+];
+
+export default function RutinaDetalle() {
+  const { accent } = useTheme();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const [titulo, setTitulo] = useState('');
+  const [dias, setDias] = useState<Dia[]>([]);
+  const [diaActivoId, setDiaActivoId] = useState<string | null>(null);
+  const [ejerciciosPorDia, setEjerciciosPorDia] = useState<Record<string, Ejercicio[]>>({});
+  const [abierto, setAbierto] = useState<string | null>(null);
+  const [busqueda, setBusqueda] = useState('');
+  const [sugerencias, setSugerencias] = useState<string[]>([]);
+  const [progresoAbierto, setProgresoAbierto] = useState<string | null>(null);
+  const [metricaProgreso, setMetricaProgreso] = useState<'1rm' | 'volumen'>('1rm');
+  const [datosProgreso, setDatosProgreso] = useState<PuntoProgreso[]>([]);
+  const [estiloRegistro, setEstiloRegistro] = useState<'acordeon' | 'notas'>('acordeon');
+  const [estiloHoja, setEstiloHoja] = useState<'oscura' | 'clara'>('oscura');
+  const [mostrarRir, setMostrarRir] = useState(true);
+  const [tamanoHoja, setTamanoHoja] = useState<'compacto' | 'normal' | 'grande'>('normal');
+  const [mostrarBuscador, setMostrarBuscador] = useState(false);
+  const [tipoSelectorAbierto, setTipoSelectorAbierto] = useState<string | null>(null);
+
+  const [editandoTitulo, setEditandoTitulo] = useState(false);
+  const [tituloTemp, setTituloTemp] = useState('');
+  const [editandoDiaId, setEditandoDiaId] = useState<string | null>(null);
+  const [nombreDiaTemp, setNombreDiaTemp] = useState('');
+  const [editandoEjercicioId, setEditandoEjercicioId] = useState<string | null>(null);
+  const [nombreEjercicioTemp, setNombreEjercicioTemp] = useState('');
+
+  const ejercicios = diaActivoId ? (ejerciciosPorDia[diaActivoId] ?? []) : [];
+  const diaCargado = diaActivoId ? ejerciciosPorDia[diaActivoId] !== undefined : true;
+  const escala = ESCALAS[tamanoHoja] ?? 1;
+
+  const hojaClara = estiloHoja === 'clara';
+  const hojaBg = hojaClara ? '#F5F2EA' : '#2A2B31';
+  const hojaText = hojaClara ? '#2A2A28' : '#ECE8DE';
+  const hojaMuted = hojaClara ? '#8A8577' : '#8B8D97';
+  const hojaBlankBg = hojaClara ? '#EAE6DA' : '#17181B';
+  const hojaBorder = hojaClara ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.06)';
+
+  useFocusEffect(
+    useCallback(() => {
+      cargarTodo();
+    }, [id])
+  );
+
+  function actualizarListaDia(diaId: string, updater: (lista: Ejercicio[]) => Ejercicio[]) {
+    setEjerciciosPorDia((prev) => ({ ...prev, [diaId]: updater(prev[diaId] ?? []) }));
+  }
+
+  async function cargarTodo() {
+    const { data: userData } = await supabase.auth.getUser();
+    const uid = userData.user?.id;
+    if (uid) {
+      const { data: perfil } = await supabase.from('profiles').select('estilo_registro, estilo_hoja').eq('id', uid).single();
+      setEstiloRegistro((perfil?.estilo_registro as 'acordeon' | 'notas') ?? 'acordeon');
+      setEstiloHoja((perfil?.estilo_hoja as 'oscura' | 'clara') ?? 'oscura');
+    }
+
+    const { data: rutina } = await supabase.from('rutina').select('titulo, mostrar_rir, tamano_hoja').eq('id', id).single();
+    setTitulo(rutina?.titulo ?? '');
+    setMostrarRir(rutina?.mostrar_rir ?? true);
+    setTamanoHoja((rutina?.tamano_hoja as any) ?? 'normal');
+
+    const { data: diasData } = await supabase
+      .from('dia').select('id, nombre, orden').eq('rutina_id', id).order('orden');
+    const listaDias = diasData ?? [];
+    setDias(listaDias);
+
+    const primerDiaId = diaActivoId ?? listaDias[0]?.id ?? null;
+    setDiaActivoId(primerDiaId);
+
+    if (primerDiaId) {
+      await archivarSiCorresponde(primerDiaId);
+      const listaPrimerDia = await obtenerEjerciciosDeDia(primerDiaId);
+      setEjerciciosPorDia((prev) => ({ ...prev, [primerDiaId]: listaPrimerDia }));
+    }
+
+    listaDias.forEach((d) => {
+      if (d.id === primerDiaId) return;
+      archivarSiCorresponde(d.id).then(async () => {
+        const lista = await obtenerEjerciciosDeDia(d.id);
+        setEjerciciosPorDia((prev) => ({ ...prev, [d.id]: lista }));
+      });
+    });
+  }
+
+  async function archivarSiCorresponde(diaId: string) {
+    const hoy = new Date().toISOString().slice(0, 10);
+    const { data: ejerciciosDia } = await supabase
+      .from('ejercicio_dia')
+      .select('id, fecha_ultimo_registro, serie_actual(id, numero_serie, tipo_serie, rir, tramo_serie(id, orden, kg, reps))')
+      .eq('dia_id', diaId)
+      .eq('activo', true);
+
+    if (!ejerciciosDia) return;
+
+    for (const e of ejerciciosDia as any[]) {
+      if (e.fecha_ultimo_registro && e.fecha_ultimo_registro !== hoy) {
+        const series = e.serie_actual ?? [];
+        const tieneDatos = series.some((s: any) =>
+          (s.tramo_serie ?? []).some((t: any) => t.kg !== null || t.reps !== null)
+        );
+        if (tieneDatos) {
+          const filasSerie = series.map((s: any) => ({
+            ejercicio_dia_id: e.id,
+            fecha: e.fecha_ultimo_registro,
+            numero_serie: s.numero_serie,
+            tipo_serie: s.tipo_serie,
+            rir: s.rir,
+          }));
+          const { data: historialInsertado } = await supabase
+            .from('serie_historial')
+            .insert(filasSerie)
+            .select('id');
+
+          if (historialInsertado) {
+            const filasTramo: any[] = [];
+            series.forEach((s: any, idx: number) => {
+              const historialId = historialInsertado[idx]?.id;
+              if (!historialId) return;
+              (s.tramo_serie ?? []).forEach((t: any) => {
+                filasTramo.push({ serie_historial_id: historialId, orden: t.orden, kg: t.kg, reps: t.reps });
+              });
+            });
+            if (filasTramo.length) await supabase.from('tramo_historial').insert(filasTramo);
+          }
+        }
+        await supabase.from('ejercicio_dia').update({ fecha_ultimo_registro: hoy }).eq('id', e.id);
+      }
+    }
+  }
+
+  async function obtenerEjerciciosDeDia(diaId: string): Promise<Ejercicio[]> {
+    const { data } = await supabase
+      .from('ejercicio_dia')
+      .select('id, orden, catalogo_ejercicio(nombre), serie_actual(id, numero_serie, tipo_serie, rir, tramo_serie(id, orden, kg, reps))')
+      .eq('dia_id', diaId)
+      .eq('activo', true)
+      .order('orden');
+
+    return (data ?? []).map((e: any) => ({
+      id: e.id,
+      nombre: e.catalogo_ejercicio?.nombre ?? '',
+      series: (e.serie_actual ?? [])
+        .sort((a: any, b: any) => a.numero_serie - b.numero_serie)
+        .map((s: any) => ({
+          id: s.id,
+          numero_serie: s.numero_serie,
+          tipo_serie: (s.tipo_serie as TipoSerie) ?? 'recta',
+          rir: s.rir?.toString() ?? '',
+          tramos: (s.tramo_serie ?? [])
+            .sort((a: any, b: any) => a.orden - b.orden)
+            .map((t: any) => ({ id: t.id, orden: t.orden, kg: t.kg?.toString() ?? '', reps: t.reps?.toString() ?? '' })),
+        })),
+    }));
+  }
+
+  function seleccionarDia(diaId: string) {
+    setDiaActivoId(diaId);
+    setAbierto(null);
+    if (ejerciciosPorDia[diaId] === undefined) {
+      archivarSiCorresponde(diaId).then(async () => {
+        const lista = await obtenerEjerciciosDeDia(diaId);
+        setEjerciciosPorDia((prev) => ({ ...prev, [diaId]: lista }));
+      });
+    }
+  }
+
+  async function anadirDia() {
+    const { data } = await supabase
+      .from('dia')
+      .insert({ rutina_id: id, nombre: `Día ${dias.length + 1}`, orden: dias.length + 1 })
+      .select('id, nombre, orden')
+      .single();
+    if (data) {
+      setDias((prev) => [...prev, data]);
+      setEjerciciosPorDia((prev) => ({ ...prev, [data.id]: [] }));
+      seleccionarDia(data.id);
+    }
+  }
+
+  async function renombrarDia(diaId: string, nuevoNombre: string) {
+    const limpio = nuevoNombre.trim();
+    if (!limpio) return;
+    await supabase.from('dia').update({ nombre: limpio }).eq('id', diaId);
+    setDias((prev) => prev.map((d) => (d.id === diaId ? { ...d, nombre: limpio } : d)));
+  }
+
+  async function confirmarBorrarDia(diaId: string, nombre: string) {
+    if (dias.length <= 1) {
+      Alert.alert('No se puede borrar', 'Una rutina necesita al menos un día.');
+      return;
+    }
+    const { count } = await supabase
+      .from('ejercicio_dia')
+      .select('id', { count: 'exact', head: true })
+      .eq('dia_id', diaId)
+      .eq('activo', true);
+
+    if (!count) {
+      borrarDia(diaId);
+      return;
+    }
+    Alert.alert('¿Estás seguro?', `Se eliminará "${nombre}" con todos sus ejercicios.`, [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Eliminar', style: 'destructive', onPress: () => borrarDia(diaId) },
+    ]);
+  }
+
+  async function borrarDia(diaId: string) {
+    await supabase.from('dia').delete().eq('id', diaId);
+    const nuevos = dias.filter((d) => d.id !== diaId);
+    setDias(nuevos);
+    setEjerciciosPorDia((prev) => {
+      const copia = { ...prev };
+      delete copia[diaId];
+      return copia;
+    });
+    if (nuevos.length) seleccionarDia(nuevos[0].id);
+  }
+
+  async function buscarEjercicios(texto: string) {
+    setBusqueda(texto);
+    if (!texto.trim()) {
+      setSugerencias([]);
+      return;
+    }
+    const yaEnDia = ejercicios.map((e) => e.nombre.toLowerCase());
+    const { data } = await supabase
+      .from('catalogo_ejercicio')
+      .select('nombre')
+      .ilike('nombre', `%${texto}%`)
+      .limit(6);
+    const filtradas = (data ?? [])
+      .map((d) => d.nombre)
+      .filter((n) => !yaEnDia.includes(n.toLowerCase()));
+    setSugerencias(filtradas);
+  }
+
+  async function crearSerieVacia(ejercicioDiaId: string, numero: number): Promise<Serie> {
+    const { data: serie } = await supabase
+      .from('serie_actual')
+      .insert({ ejercicio_dia_id: ejercicioDiaId, numero_serie: numero, tipo_serie: 'recta', rir: null })
+      .select('id')
+      .single();
+    const serieId = serie?.id ?? '';
+    const { data: tramo } = await supabase
+      .from('tramo_serie')
+      .insert({ serie_actual_id: serieId, orden: 1, kg: null, reps: null })
+      .select('id')
+      .single();
+    return {
+      id: serieId,
+      numero_serie: numero,
+      tipo_serie: 'recta',
+      rir: '',
+      tramos: [{ id: tramo?.id ?? '', orden: 1, kg: '', reps: '' }],
+    };
+  }
+
+  async function anadirEjercicio(nombre: string) {
+    if (!diaActivoId || !nombre.trim()) return;
+    if (ejercicios.some((e) => e.nombre.toLowerCase() === nombre.toLowerCase())) {
+      setBusqueda('');
+      setSugerencias([]);
+      return;
+    }
+
+    const { data: userData } = await supabase.auth.getUser();
+    const uid = userData.user?.id;
+
+    let { data: existenteCatalogo } = await supabase
+      .from('catalogo_ejercicio')
+      .select('id')
+      .ilike('nombre', nombre)
+      .maybeSingle();
+
+    let catalogoId = existenteCatalogo?.id;
+    if (!catalogoId) {
+      const { data: nuevo, error } = await supabase
+        .from('catalogo_ejercicio')
+        .insert({ nombre, es_personalizado: true, usuario_id: uid })
+        .select('id')
+        .single();
+      if (error) {
+        Alert.alert('No se pudo crear el ejercicio', error.message);
+        return;
+      }
+      catalogoId = nuevo?.id;
+    }
+    if (!catalogoId) return;
+
+    const { data: filaExistente } = await supabase
+      .from('ejercicio_dia')
+      .select('id')
+      .eq('dia_id', diaActivoId)
+      .eq('catalogo_ejercicio_id', catalogoId)
+      .maybeSingle();
+
+    let ejercicioDiaId: string;
+    let series: Serie[];
+
+    if (filaExistente) {
+      await supabase.from('ejercicio_dia').update({
+        activo: true,
+        orden: ejercicios.length + 1,
+        fecha_ultimo_registro: new Date().toISOString().slice(0, 10),
+      }).eq('id', filaExistente.id);
+      ejercicioDiaId = filaExistente.id;
+
+      const { data: seriesExistentes } = await supabase
+        .from('serie_actual')
+        .select('id, numero_serie, tipo_serie, rir, tramo_serie(id, orden, kg, reps)')
+        .eq('ejercicio_dia_id', ejercicioDiaId)
+        .order('numero_serie');
+
+      series = (seriesExistentes ?? []).map((s: any) => ({
+        id: s.id,
+        numero_serie: s.numero_serie,
+        tipo_serie: (s.tipo_serie as TipoSerie) ?? 'recta',
+        rir: s.rir?.toString() ?? '',
+        tramos: (s.tramo_serie ?? [])
+          .sort((a: any, b: any) => a.orden - b.orden)
+          .map((t: any) => ({ id: t.id, orden: t.orden, kg: t.kg?.toString() ?? '', reps: t.reps?.toString() ?? '' })),
+      }));
+
+      if (series.length === 0) {
+        series = [await crearSerieVacia(ejercicioDiaId, 1)];
+      }
+    } else {
+      const { data: ejercicioDia, error: errorEjercicio } = await supabase
+        .from('ejercicio_dia')
+        .insert({ dia_id: diaActivoId, catalogo_ejercicio_id: catalogoId, orden: ejercicios.length + 1, fecha_ultimo_registro: new Date().toISOString().slice(0, 10) })
+        .select('id')
+        .single();
+
+      if (errorEjercicio || !ejercicioDia) {
+        Alert.alert('No se pudo añadir el ejercicio', errorEjercicio?.message ?? '');
+        return;
+      }
+      ejercicioDiaId = ejercicioDia.id;
+      series = [await crearSerieVacia(ejercicioDiaId, 1)];
+    }
+
+    actualizarListaDia(diaActivoId, (lista) => [...lista, { id: ejercicioDiaId, nombre, series }]);
+    setBusqueda('');
+    setSugerencias([]);
+  }
+
+  async function renombrarEjercicio(ejercicioId: string, nuevoNombre: string) {
+    if (!diaActivoId) return;
+    const limpio = nuevoNombre.trim();
+    if (!limpio) return;
+    const actual = ejercicios.find((e) => e.id === ejercicioId);
+    if (actual && actual.nombre.toLowerCase() === limpio.toLowerCase()) return;
+
+    if (ejercicios.some((e) => e.id !== ejercicioId && e.nombre.toLowerCase() === limpio.toLowerCase())) {
+      Alert.alert('Ya existe', 'Ya tienes un ejercicio con ese nombre en este día.');
+      return;
+    }
+
+    const { data: userData } = await supabase.auth.getUser();
+    const uid = userData.user?.id;
+
+    let { data: existente } = await supabase
+      .from('catalogo_ejercicio')
+      .select('id')
+      .ilike('nombre', limpio)
+      .maybeSingle();
+
+    let catalogoId = existente?.id;
+    if (!catalogoId) {
+      const { data: nuevo, error } = await supabase
+        .from('catalogo_ejercicio')
+        .insert({ nombre: limpio, es_personalizado: true, usuario_id: uid })
+        .select('id')
+        .single();
+      if (error) {
+        Alert.alert('No se pudo renombrar', error.message);
+        return;
+      }
+      catalogoId = nuevo?.id;
+    }
+
+    await supabase.from('ejercicio_dia').update({ catalogo_ejercicio_id: catalogoId }).eq('id', ejercicioId);
+    actualizarListaDia(diaActivoId, (lista) => lista.map((e) => (e.id === ejercicioId ? { ...e, nombre: limpio } : e)));
+  }
+
+  async function anadirSerie(ejercicioId: string) {
+    if (!diaActivoId) return;
+    const ejercicio = ejercicios.find((e) => e.id === ejercicioId);
+    const siguienteNumero = (ejercicio?.series.length ?? 0) + 1;
+    const nuevaSerie = await crearSerieVacia(ejercicioId, siguienteNumero);
+
+    actualizarListaDia(diaActivoId, (lista) =>
+      lista.map((e) => (e.id === ejercicioId ? { ...e, series: [...e.series, nuevaSerie] } : e))
+    );
+
+    if (progresoAbierto === ejercicioId) {
+      const actualizado = ejercicios.find((e) => e.id === ejercicioId);
+      if (actualizado) cargarPuntosProgreso({ ...actualizado, series: [...actualizado.series, nuevaSerie] }, metricaProgreso);
+    }
+  }
+
+  async function cambiarTipoSerie(serieId: string, nuevoTipo: TipoSerie) {
+    if (!diaActivoId) return;
+    const ejercicioActual = ejercicios.find((e) => e.series.some((s) => s.id === serieId));
+    const serieActual = ejercicioActual?.series.find((s) => s.id === serieId);
+
+    if (nuevoTipo === 'recta' && serieActual && serieActual.tramos.length > 1) {
+      const idsSobrantes = serieActual.tramos.slice(1).map((t) => t.id);
+      await supabase.from('tramo_serie').delete().in('id', idsSobrantes);
+    }
+
+    actualizarListaDia(diaActivoId, (lista) =>
+      lista.map((e) => ({
+        ...e,
+        series: e.series.map((s) =>
+          s.id === serieId
+            ? { ...s, tipo_serie: nuevoTipo, tramos: nuevoTipo === 'recta' ? s.tramos.slice(0, 1) : s.tramos }
+            : s
+        ),
+      }))
+    );
+    await supabase.from('serie_actual').update({ tipo_serie: nuevoTipo }).eq('id', serieId);
+  }
+  async function actualizarTramo(serieId: string, tramoId: string, campo: 'kg' | 'reps', valor: string) {
+    if (!diaActivoId) return;
+    let ejercicioAfectadoId: string | null = null;
+    let seriesActualizadas: Serie[] = [];
+
+    actualizarListaDia(diaActivoId, (lista) =>
+      lista.map((e) => {
+        if (!e.series.some((s) => s.id === serieId)) return e;
+        ejercicioAfectadoId = e.id;
+        seriesActualizadas = e.series.map((s) =>
+          s.id === serieId
+            ? { ...s, tramos: s.tramos.map((t) => (t.id === tramoId ? { ...t, [campo]: valor } : t)) }
+            : s
+        );
+        return { ...e, series: seriesActualizadas };
+      })
+    );
+
+    await supabase.from('tramo_serie').update({ [campo]: valor === '' ? null : Number(valor) }).eq('id', tramoId);
+
+    if (ejercicioAfectadoId && progresoAbierto === ejercicioAfectadoId) {
+      const ejercicio = ejercicios.find((e) => e.id === ejercicioAfectadoId);
+      if (ejercicio) cargarPuntosProgreso({ ...ejercicio, series: seriesActualizadas }, metricaProgreso);
+    }
+  }
+
+  async function actualizarRir(serieId: string, valor: string) {
+    if (!diaActivoId) return;
+    actualizarListaDia(diaActivoId, (lista) =>
+      lista.map((e) => ({ ...e, series: e.series.map((s) => (s.id === serieId ? { ...s, rir: valor } : s)) }))
+    );
+    await supabase.from('serie_actual').update({ rir: valor === '' ? null : Number(valor) }).eq('id', serieId);
+  }
+
+  async function anadirTramo(serieId: string) {
+    if (!diaActivoId) return;
+    const ejercicio = ejercicios.find((e) => e.series.some((s) => s.id === serieId));
+    const serie = ejercicio?.series.find((s) => s.id === serieId);
+    const siguienteOrden = (serie?.tramos.length ?? 0) + 1;
+
+    const { data: tramo } = await supabase
+      .from('tramo_serie')
+      .insert({ serie_actual_id: serieId, orden: siguienteOrden, kg: null, reps: null })
+      .select('id')
+      .single();
+
+    const nuevoTramo: Tramo = { id: tramo?.id ?? '', orden: siguienteOrden, kg: '', reps: '' };
+
+    actualizarListaDia(diaActivoId, (lista) =>
+      lista.map((e) => ({ ...e, series: e.series.map((s) => (s.id === serieId ? { ...s, tramos: [...s.tramos, nuevoTramo] } : s)) }))
+    );
+  }
+
+  async function borrarTramo(serieId: string, tramoId: string) {
+    if (!diaActivoId) return;
+    const ejercicio = ejercicios.find((e) => e.series.some((s) => s.id === serieId));
+    const serie = ejercicio?.series.find((s) => s.id === serieId);
+    if (!serie || serie.tramos.length <= 1) return;
+
+    await supabase.from('tramo_serie').delete().eq('id', tramoId);
+
+    actualizarListaDia(diaActivoId, (lista) =>
+      lista.map((e) => ({ ...e, series: e.series.map((s) => (s.id === serieId ? { ...s, tramos: s.tramos.filter((t) => t.id !== tramoId) } : s)) }))
+    );
+  }
+
+  async function borrarSerie(serieId: string) {
+    if (!diaActivoId) return;
+    await supabase.from('serie_actual').delete().eq('id', serieId);
+    let ejercicioAfectadoId: string | null = null;
+    let seriesRestantes: Serie[] = [];
+
+    actualizarListaDia(diaActivoId, (lista) =>
+      lista.map((e) => {
+        if (!e.series.some((s) => s.id === serieId)) return e;
+        ejercicioAfectadoId = e.id;
+        seriesRestantes = e.series.filter((s) => s.id !== serieId);
+        return { ...e, series: seriesRestantes };
+      })
+    );
+
+    if (ejercicioAfectadoId && progresoAbierto === ejercicioAfectadoId) {
+      const ejercicio = ejercicios.find((e) => e.id === ejercicioAfectadoId);
+      if (ejercicio) cargarPuntosProgreso({ ...ejercicio, series: seriesRestantes }, metricaProgreso);
+    }
+  }
+
+  function calcularValor(tramos: { kg: number; reps: number }[], metric: '1rm' | 'volumen') {
+    if (metric === 'volumen') {
+      return Math.round(tramos.reduce((acc, t) => acc + t.kg * t.reps, 0));
+    }
+    let best = 0;
+    tramos.forEach((t) => {
+      if (t.kg > 0 && t.reps > 0) {
+        const est = t.kg * (1 + t.reps / 30);
+        if (est > best) best = est;
+      }
+    });
+    return Math.round(best);
+  }
+
+  async function cargarPuntosProgreso(ejercicio: Ejercicio, metric: '1rm' | 'volumen') {
+    const { data } = await supabase
+      .from('serie_historial')
+      .select('fecha, numero_serie, tramo_historial(kg, reps)')
+      .eq('ejercicio_dia_id', ejercicio.id)
+      .order('fecha');
+
+    const porFecha: Record<string, { tramos: { kg: number; reps: number }[]; seriesCount: number }> = {};
+    (data ?? []).forEach((row: any) => {
+      if (!porFecha[row.fecha]) porFecha[row.fecha] = { tramos: [], seriesCount: 0 };
+      porFecha[row.fecha].seriesCount += 1;
+      (row.tramo_historial ?? []).forEach((t: any) => {
+        porFecha[row.fecha].tramos.push({ kg: t.kg ?? 0, reps: t.reps ?? 0 });
+      });
+    });
+
+    const puntos: PuntoProgreso[] = Object.entries(porFecha).map(([fecha, info]) => ({
+      fecha,
+      valor: calcularValor(info.tramos, metric),
+      seriesCount: info.seriesCount,
+    }));
+
+    const tramosHoy = ejercicio.series.flatMap((s) => s.tramos.map((t) => ({ kg: Number(t.kg) || 0, reps: Number(t.reps) || 0 })));
+    const valorHoy = calcularValor(tramosHoy, metric);
+    if (valorHoy > 0) puntos.push({ fecha: 'Hoy', valor: valorHoy, seriesCount: ejercicio.series.length });
+
+    setDatosProgreso(puntos);
+  }
+
+  function toggleProgreso(ejercicio: Ejercicio) {
+    if (progresoAbierto === ejercicio.id) {
+      setProgresoAbierto(null);
+      return;
+    }
+    setProgresoAbierto(ejercicio.id);
+    const esRelevante = EJERCICIOS_1RM.has(ejercicio.nombre.toLowerCase());
+    cargarPuntosProgreso(ejercicio, esRelevante ? metricaProgreso : 'volumen');
+  }
+
+  function cambiarMetrica(ejercicio: Ejercicio, metric: '1rm' | 'volumen') {
+    setMetricaProgreso(metric);
+    cargarPuntosProgreso(ejercicio, metric);
+  }
+
+  async function borrarEjercicio(ejercicioId: string) {
+    if (!diaActivoId) return;
+    await supabase.from('ejercicio_dia').update({ activo: false }).eq('id', ejercicioId);
+    actualizarListaDia(diaActivoId, (lista) => lista.filter((e) => e.id !== ejercicioId));
+    if (progresoAbierto === ejercicioId) setProgresoAbierto(null);
+  }
+
+  async function renombrarTitulo(nuevoTitulo: string) {
+    setTitulo(nuevoTitulo);
+    await supabase.from('rutina').update({ titulo: nuevoTitulo }).eq('id', id);
+  }
+
+  async function volverAtras() {
+    if (!titulo.trim()) {
+      const { data: diasRow } = await supabase.from('dia').select('id').eq('rutina_id', id);
+      const diaIds = (diasRow ?? []).map((d: any) => d.id);
+      let totalEjercicios = 0;
+      if (diaIds.length) {
+        const { count } = await supabase
+          .from('ejercicio_dia')
+          .select('id', { count: 'exact', head: true })
+          .in('dia_id', diaIds)
+          .eq('activo', true);
+        totalEjercicios = count ?? 0;
+      }
+      if (totalEjercicios === 0) {
+        await supabase.from('rutina').delete().eq('id', id);
+      }
+    }
+    router.replace('/');
+  }
+
+  function renderProgresoBlock(e: Ejercicio) {
+    const baseline = datosProgreso[0]?.seriesCount ?? 0;
+    return (
+      <View style={styles.progresoCard}>
+        {EJERCICIOS_1RM.has(e.nombre.toLowerCase()) && (
+          <View style={styles.metricaRow}>
+            <TouchableOpacity
+              style={[styles.metricaChip, metricaProgreso === '1rm' && { backgroundColor: accent, borderColor: accent }]}
+              onPress={() => cambiarMetrica(e, '1rm')}
+            >
+              <Text style={[styles.metricaText, metricaProgreso === '1rm' && styles.metricaTextActiva]}>1RM estimado</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.metricaChip, metricaProgreso === 'volumen' && { backgroundColor: accent, borderColor: accent }]}
+              onPress={() => cambiarMetrica(e, 'volumen')}
+            >
+              <Text style={[styles.metricaText, metricaProgreso === 'volumen' && styles.metricaTextActiva]}>Volumen total</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {EJERCICIOS_1RM.has(e.nombre.toLowerCase()) && metricaProgreso === '1rm' && (
+          <Text style={styles.infoBox}>
+            Estimación del peso máximo a 1 repetición, según tu mejor serie. No sustituye una prueba real.
+          </Text>
+        )}
+
+        {datosProgreso.length === 0 ? (
+          <Text style={styles.sinDatos}>Aún no hay datos suficientes.</Text>
+        ) : (
+          <>
+            {(() => {
+              const W = 280, H = 130, padL = 8, padR = 8, padT = 18, padB = 22;
+              const vals = datosProgreso.map((d) => d.valor);
+              const minV = Math.min(...vals), maxV = Math.max(...vals);
+              const rangeV = (maxV - minV) || 1;
+              const yFor = (v: number) => padT + (H - padT - padB) * (1 - (v - minV) / rangeV);
+              const xFor = (i: number) => (datosProgreso.length === 1 ? W / 2 : padL + (W - padL - padR) * (i / (datosProgreso.length - 1)));
+              const pts = datosProgreso.map((d, i) => ({ x: xFor(i), y: yFor(d.valor), ...d }));
+              const pathD = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+              return (
+                <Svg width="100%" height={130} viewBox={`0 0 ${W} ${H}`}>
+                  <SvgLine x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="rgba(255,255,255,0.1)" />
+                  {pts.length > 1 && <Path d={pathD} stroke={accent} strokeWidth={2} fill="none" />}
+                  {pts.map((p, i) => {
+                    const color = p.seriesCount > baseline ? '#4C8C5B' : p.seriesCount < baseline ? '#D9B23C' : accent;
+                    return (
+                      <React.Fragment key={i}>
+                        <Circle cx={p.x} cy={p.y} r={p.fecha === 'Hoy' ? 4 : 3} fill={color} />
+                        <SvgText x={p.x} y={p.y - 8} fontSize="9" fill="#ECE8DE" textAnchor="middle">{p.valor}</SvgText>
+                        <SvgText x={p.x} y={H - 6} fontSize="8" fill="#8B8D97" textAnchor="middle">{p.fecha === 'Hoy' ? 'Hoy' : p.fecha.slice(5)}</SvgText>
+                      </React.Fragment>
+                    );
+                  })}
+                </Svg>
+              );
+            })()}
+            {datosProgreso.length > 1 && (
+              <View style={styles.legendRow}>
+                <Text style={styles.legendItem}>🟢 Más series que al inicio</Text>
+                <Text style={styles.legendItem}>🟡 Menos series que al inicio</Text>
+              </View>
+            )}
+          </>
+        )}
+      </View>
+    );
+  }
+
+  function explicarTiposSerie() {
+    Alert.alert(
+      '¿Qué diferencia hay?',
+      'Recta: una serie normal, un peso y unas reps.\n\nMulti-tramo: para cuando una misma serie tiene varios bloques de peso/reps sin apenas descanso entre ellos — drop set (bajas el peso y sigues), cluster set (mismo peso, mini-descansos de segundos), rest-pause y myo-reps (descansas unos segundos y sacas más reps). Añade un tramo por cada bloque con "+ tramo".'
+    );
+  }
+
+  function renderTipoSelector(s: Serie, enHoja: boolean = false) {
+    const label = TIPOS_SERIE.find((t) => t.value === s.tipo_serie)?.label ?? 'Recta';
+    if (tipoSelectorAbierto !== s.id) {
+      return (
+        <View style={styles.tipoSelectorRow}>
+          <TouchableOpacity onPress={() => setTipoSelectorAbierto(s.id)} style={styles.tipoLabelBtn}>
+            <Text style={[styles.tipoLabelText, enHoja && { color: hojaMuted }]}>{label} ▾</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={explicarTiposSerie} style={{ marginLeft: 6 }}>
+            <Text style={[styles.tipoInfoIcon, enHoja && { color: hojaMuted }]}>ⓘ</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.tipoChipsRow}>
+        {TIPOS_SERIE.map((t) => (
+          <TouchableOpacity
+            key={t.value}
+            style={[styles.tipoChip, s.tipo_serie === t.value && { backgroundColor: accent, borderColor: accent }]}
+            onPress={() => { cambiarTipoSerie(s.id, t.value); setTipoSelectorAbierto(null); }}
+          >
+            <Text style={[styles.tipoChipText, s.tipo_serie === t.value && styles.tipoChipTextActiva]}>{t.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  }
+
+  function renderAddExercise(inSheet: boolean) {
+    if (!mostrarBuscador) {
+      return (
+        <TouchableOpacity onPress={() => setMostrarBuscador(true)} style={inSheet ? { marginTop: 8 } : { marginTop: 4 }}>
+          <Text style={[styles.addExerciseButton, { color: accent }]}>+ Añadir ejercicio</Text>
+        </TouchableOpacity>
+      );
+    }
+    return (
+      <View style={inSheet ? { marginTop: 8 } : undefined}>
+        <Text style={[styles.label, inSheet && { color: hojaMuted }]}>Añadir ejercicio</Text>
+        <TextInput
+          style={[styles.input, inSheet && { backgroundColor: hojaBlankBg, color: hojaText, borderColor: hojaBorder }]}
+          placeholder="Ej. Press banca"
+          placeholderTextColor={inSheet ? hojaMuted : '#8B8D97'}
+          value={busqueda}
+          onChangeText={buscarEjercicios}
+          onSubmitEditing={() => anadirEjercicio(busqueda)}
+        />
+        {sugerencias.map((s) => (
+          <TouchableOpacity key={s} onPress={() => anadirEjercicio(s)}>
+            <Text style={[styles.sugerencia, inSheet && { color: hojaMuted }]}>{s}</Text>
+          </TouchableOpacity>
+        ))}
+        {busqueda.trim().length > 0 && !sugerencias.includes(busqueda) && (
+          <TouchableOpacity onPress={() => anadirEjercicio(busqueda)}>
+            <Text style={[styles.sugerencia, { color: accent }]}>+ Crear "{busqueda}"</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
+    >
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={{ padding: 20, paddingTop: 60, paddingBottom: 40 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <TouchableOpacity onPress={volverAtras}>
+          <Text style={styles.back}>← Volver</Text>
+        </TouchableOpacity>
+
+        <View style={styles.titleRow}>
+          {editandoTitulo ? (
+            <TextInput
+              style={styles.titleInput}
+              value={tituloTemp}
+              onChangeText={setTituloTemp}
+              autoFocus
+              onBlur={() => { setEditandoTitulo(false); renombrarTitulo(tituloTemp); }}
+              onSubmitEditing={() => { setEditandoTitulo(false); renombrarTitulo(tituloTemp); }}
+            />
+          ) : (
+            <Text style={styles.title} onPress={() => { setTituloTemp(titulo); setEditandoTitulo(true); }}>
+              {titulo.trim() || 'Rutina sin título'}
+            </Text>
+          )}
+          <TouchableOpacity onPress={() => router.push(`/rutina/${id}/editor`)}>
+            <Text style={styles.editIcon}>⚙</Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.diasRow}>
+          {dias.map((d) => (
+            <View key={d.id} style={[styles.chip, diaActivoId === d.id && { backgroundColor: accent, borderColor: accent }]}>
+              {editandoDiaId === d.id ? (
+                <TextInput
+                  style={styles.chipInput}
+                  value={nombreDiaTemp}
+                  onChangeText={setNombreDiaTemp}
+                  autoFocus
+                  onBlur={() => { setEditandoDiaId(null); renombrarDia(d.id, nombreDiaTemp); }}
+                  onSubmitEditing={() => { setEditandoDiaId(null); renombrarDia(d.id, nombreDiaTemp); }}
+                />
+              ) : (
+                <TouchableOpacity
+                  onPress={() => seleccionarDia(d.id)}
+                  onLongPress={() => { setNombreDiaTemp(d.nombre); setEditandoDiaId(d.id); }}
+                >
+                  <Text style={[styles.chipText, diaActivoId === d.id && styles.chipTextActiva]}>{d.nombre}</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => confirmarBorrarDia(d.id, d.nombre)} style={{ marginLeft: 6 }}>
+                <Text style={[styles.chipDelete, diaActivoId === d.id && { color: '#fff' }]}>×</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+          <TouchableOpacity style={[styles.chip, styles.chipAdd, { borderColor: accent }]} onPress={anadirDia}>
+            <Text style={[styles.chipAddText, { color: accent }]}>+</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {estiloRegistro === 'acordeon' && !diaCargado && (
+          <Text style={styles.sinDatos}>Cargando...</Text>
+        )}
+
+        {estiloRegistro === 'acordeon' && ejercicios.map((e) => (
+          <View key={e.id} style={styles.ejercicioBox}>
+            <View style={styles.ejercicioHeader}>
+              {editandoEjercicioId === e.id ? (
+                <TextInput
+                  style={styles.ejercicioInput}
+                  value={nombreEjercicioTemp}
+                  onChangeText={setNombreEjercicioTemp}
+                  autoFocus
+                  onBlur={() => { setEditandoEjercicioId(null); renombrarEjercicio(e.id, nombreEjercicioTemp); }}
+                  onSubmitEditing={() => { setEditandoEjercicioId(null); renombrarEjercicio(e.id, nombreEjercicioTemp); }}
+                />
+              ) : (
+                <TouchableOpacity
+                  style={{ flex: 1 }}
+                  onPress={() => setAbierto(abierto === e.id ? null : e.id)}
+                  onLongPress={() => { setNombreEjercicioTemp(e.nombre); setEditandoEjercicioId(e.id); }}
+                >
+                  <Text style={[styles.ejercicioNombre, { fontSize: 14 * escala }]}>{e.nombre}</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => borrarEjercicio(e.id)}>
+                <Text style={styles.trash}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {abierto === e.id && (
+              <View style={styles.ejercicioBody}>
+                {e.series.map((s, i) => (
+                  <View key={s.id} style={styles.serieBlock}>
+                    <View style={styles.serieBlockHeader}>
+                      <Text style={styles.serieBlockTitle}>Serie {i + 1}</Text>
+                      <TouchableOpacity onPress={() => borrarSerie(s.id)}>
+                        <Text style={styles.trash}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {renderTipoSelector(s)}
+
+                    <View style={styles.colLabels}>
+                      {s.tipo_serie !== 'recta' && <Text style={styles.colLabelText}>#</Text>}
+                      <Text style={styles.colLabelText}>Kg</Text>
+                      <Text style={styles.colLabelText}>Reps</Text>
+                      {mostrarRir && <Text style={styles.colLabelText}>RIR</Text>}
+                      <Text style={styles.colLabelText}> </Text>
+                    </View>
+
+                    {s.tramos.map((t, ti) => (
+                      <View key={t.id} style={styles.serieRow}>
+                        {s.tipo_serie !== 'recta' && <Text style={styles.serieNum}>{ti + 1}</Text>}
+                        <TextInput
+                          style={[styles.serieInput, { paddingVertical: 8 * escala }]}
+                          placeholder="kg"
+                          placeholderTextColor="#8B8D97"
+                          keyboardType="numeric"
+                          value={t.kg}
+                          onChangeText={(v) => actualizarTramo(s.id, t.id, 'kg', v)}
+                        />
+                        <TextInput
+                          style={[styles.serieInput, { paddingVertical: 8 * escala }]}
+                          placeholder="reps"
+                          placeholderTextColor="#8B8D97"
+                          keyboardType="numeric"
+                          value={t.reps}
+                          onChangeText={(v) => actualizarTramo(s.id, t.id, 'reps', v)}
+                        />
+                        {mostrarRir && ti === 0 && (
+                          <TextInput
+                            style={[styles.serieInputRir, { paddingVertical: 8 * escala }]}
+                            placeholder="FALLO"
+                            placeholderTextColor="#8B8D97"
+                            keyboardType="numeric"
+                            value={s.rir}
+                            onChangeText={(v) => actualizarRir(s.id, v)}
+                          />
+                        )}
+                        {mostrarRir && ti > 0 && <View style={styles.serieInputRir} />}
+                        {s.tipo_serie !== 'recta' && s.tramos.length > 1 ? (
+                          <TouchableOpacity onPress={() => borrarTramo(s.id, t.id)}>
+                            <Text style={styles.trash}>×</Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <View style={{ width: 15 }} />
+                        )}
+                      </View>
+                    ))}
+
+                    {s.tipo_serie !== 'recta' && (
+                      <TouchableOpacity onPress={() => anadirTramo(s.id)}>
+                        <Text style={[styles.addSerieText, { color: accent, fontSize: 11 }]}>+ Añadir tramo</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+
+                <TouchableOpacity style={styles.addSerieBtn} onPress={() => anadirSerie(e.id)}>
+                  <Text style={[styles.addSerieText, { color: accent }]}>+ Añadir serie</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => toggleProgreso(e)}>
+                  <Text style={styles.progresoToggle}>
+                    {progresoAbierto === e.id ? 'Ocultar progreso' : 'Ver progreso'}
+                  </Text>
+                </TouchableOpacity>
+
+                {progresoAbierto === e.id && renderProgresoBlock(e)}
+              </View>
+            )}
+          </View>
+        ))}
+
+        {estiloRegistro === 'notas' && (
+          <View style={[styles.notebookSheet, { backgroundColor: hojaBg, borderColor: hojaBorder }]}>
+            {ejercicios.map((e) => (
+              <View key={e.id} style={[styles.noteExercise, { borderColor: hojaBorder }]}>
+                <View style={styles.noteExerciseHeader}>
+                  {editandoEjercicioId === e.id ? (
+                    <TextInput
+                      style={[styles.ejercicioInput, { color: hojaText, backgroundColor: hojaBlankBg }]}
+                      value={nombreEjercicioTemp}
+                      onChangeText={setNombreEjercicioTemp}
+                      autoFocus
+                      onBlur={() => { setEditandoEjercicioId(null); renombrarEjercicio(e.id, nombreEjercicioTemp); }}
+                      onSubmitEditing={() => { setEditandoEjercicioId(null); renombrarEjercicio(e.id, nombreEjercicioTemp); }}
+                    />
+                  ) : (
+                    <TouchableOpacity
+                      style={{ flex: 1 }}
+                      onLongPress={() => { setNombreEjercicioTemp(e.nombre); setEditandoEjercicioId(e.id); }}
+                    >
+                      <Text style={[styles.ejercicioNombre, { color: hojaText, fontSize: 14 * escala }]}>{e.nombre}</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity onPress={() => borrarEjercicio(e.id)}>
+                    <Text style={[styles.trash, { color: hojaMuted }]}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {e.series.map((s) => (
+                  <View key={s.id} style={styles.noteSerieGroup}>
+                    {renderTipoSelector(s, true)}
+                    {s.tramos.map((t, ti) => (
+                      <View key={t.id} style={styles.noteSerieLine}>
+                        {ti > 0 && <Text style={[styles.noteText, { color: hojaMuted, fontSize: 12 * escala }]}>→</Text>}
+                        <TextInput
+                          style={[styles.noteBlank, { backgroundColor: hojaBlankBg, color: hojaText, width: 48 * escala, fontSize: 13 * escala }]}
+                          placeholder="__"
+                          placeholderTextColor={hojaMuted}
+                          keyboardType="numeric"
+                          value={t.kg}
+                          onChangeText={(v) => actualizarTramo(s.id, t.id, 'kg', v)}
+                        />
+                        <Text style={[styles.noteText, { color: hojaText, fontSize: 12 * escala }]}>KG a unas</Text>
+                        <TextInput
+                          style={[styles.noteBlank, { backgroundColor: hojaBlankBg, color: hojaText, width: 48 * escala, fontSize: 13 * escala }]}
+                          placeholder="__"
+                          placeholderTextColor={hojaMuted}
+                          keyboardType="numeric"
+                          value={t.reps}
+                          onChangeText={(v) => actualizarTramo(s.id, t.id, 'reps', v)}
+                        />
+                        <Text style={[styles.noteText, { color: hojaText, fontSize: 12 * escala }]}>
+                          {ti === 0 && mostrarRir ? 'reps, RIR' : 'repeticiones'}
+                        </Text>
+                        {ti === 0 && mostrarRir && (
+                          <TextInput
+                            style={[styles.noteBlankSmall, { backgroundColor: hojaBlankBg, color: hojaText, width: 58 * escala, fontSize: 11 * escala }]}
+                            placeholder="FALLO"
+                            placeholderTextColor={hojaMuted}
+                            keyboardType="numeric"
+                            value={s.rir}
+                            onChangeText={(v) => actualizarRir(s.id, v)}
+                          />
+                        )}
+                        {s.tipo_serie !== 'recta' && s.tramos.length > 1 && (
+                          <TouchableOpacity onPress={() => borrarTramo(s.id, t.id)}>
+                            <Text style={[styles.trash, { color: hojaMuted }]}>×</Text>
+                          </TouchableOpacity>
+                        )}
+                        {ti === s.tramos.length - 1 && (
+                          <TouchableOpacity onPress={() => borrarSerie(s.id)}>
+                            <Text style={[styles.trash, { color: hojaMuted }]}>✕</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    ))}
+                    {s.tipo_serie !== 'recta' && (
+                      <TouchableOpacity onPress={() => anadirTramo(s.id)}>
+                        <Text style={[styles.addSerieText, { color: accent, fontSize: 11 }]}>+ tramo</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+
+                <TouchableOpacity onPress={() => anadirSerie(e.id)}>
+                  <Text style={[styles.addSerieText, { color: accent }]}>+ Añadir serie</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => toggleProgreso(e)}>
+                  <Text style={[styles.progresoToggle, { color: hojaMuted }]}>
+                    {progresoAbierto === e.id ? 'Ocultar progreso' : 'Ver progreso'}
+                  </Text>
+                </TouchableOpacity>
+
+                {progresoAbierto === e.id && renderProgresoBlock(e)}
+              </View>
+            ))}
+
+            {renderAddExercise(true)}
+          </View>
+        )}
+
+        {estiloRegistro === 'acordeon' && renderAddExercise(false)}
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#17181B' },
+  back: { color: '#8B8D97', fontSize: 14, marginBottom: 20 },
+  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  title: { color: '#ECE8DE', fontSize: 20, fontWeight: '900', flex: 1 },
+  titleInput: { color: '#ECE8DE', fontSize: 20, fontWeight: '900', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.15)', padding: 0, flex: 1 },
+  editIcon: { color: '#8B8D97', fontSize: 18, marginLeft: 10 },
+  diasRow: { marginBottom: 16 },
+  chip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', marginRight: 8 },
+  chipDelete: { color: '#8B8D97', fontSize: 13 },
+  chipText: { color: '#8B8D97', fontSize: 12 },
+  chipTextActiva: { color: '#fff', fontWeight: '600' },
+  chipInput: { color: '#ECE8DE', fontSize: 12, padding: 0, minWidth: 50 },
+  chipAdd: { borderStyle: 'dashed' },
+  chipAddText: { fontSize: 12 },
+  ejercicioBox: { backgroundColor: '#2A2B31', borderRadius: 12, marginBottom: 10, overflow: 'hidden' },
+  ejercicioHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14 },
+  ejercicioNombre: { color: '#ECE8DE', fontWeight: '600' },
+  ejercicioInput: { flex: 1, color: '#ECE8DE', fontSize: 14, fontWeight: '600', padding: 0, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.15)' },
+  trash: { color: '#8B8D97', fontSize: 15 },
+  ejercicioBody: { padding: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
+  serieBlock: { marginBottom: 14 },
+  serieBlockHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  serieBlockTitle: { color: '#8B8D97', fontSize: 11, fontWeight: '700' },
+  tipoChipsRow: { marginBottom: 6 },
+  tipoChip: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', marginRight: 6 },
+  tipoChipText: { color: '#8B8D97', fontSize: 10 },
+  tipoChipTextActiva: { color: '#fff', fontWeight: '600' },
+  tipoSelectorRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  tipoLabelBtn: { alignSelf: 'flex-start' },
+  tipoLabelText: { color: '#8B8D97', fontSize: 11, fontWeight: '600' },
+  tipoInfoIcon: { color: '#8B8D97', fontSize: 13 },
+  colLabels: { flexDirection: 'row', gap: 8, marginBottom: 6 },
+  colLabelText: { flex: 1, color: '#8B8D97', fontSize: 9, textAlign: 'center' },
+  serieRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  serieNum: { color: '#8B8D97', fontSize: 12, width: 16 },
+  serieInput: { flex: 1, backgroundColor: '#17181B', borderRadius: 8, padding: 8, color: '#ECE8DE', textAlign: 'center' },
+  serieInputRir: { width: 58, backgroundColor: '#17181B', borderRadius: 8, padding: 8, color: '#ECE8DE', textAlign: 'center' },
+  addSerieBtn: { marginTop: 4 },
+  addSerieText: { fontSize: 12, textAlign: 'center', fontWeight: '600' },
+  addExerciseButton: { fontSize: 13, fontWeight: '700' },
+  progresoToggle: { color: '#8B8D97', fontSize: 11, textDecorationLine: 'underline', marginTop: 10, marginBottom: 4 },
+  progresoCard: { backgroundColor: '#17181B', borderRadius: 10, padding: 10, marginTop: 4 },
+  metricaRow: { flexDirection: 'row', gap: 6, marginBottom: 6 },
+  metricaChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  metricaText: { color: '#8B8D97', fontSize: 11 },
+  metricaTextActiva: { color: '#fff', fontWeight: '600' },
+  infoBox: { backgroundColor: 'rgba(59,110,168,0.12)', borderColor: 'rgba(59,110,168,0.3)', borderWidth: 1, color: '#3B6EA8', fontSize: 11, padding: 8, borderRadius: 8, marginBottom: 8, lineHeight: 16 },
+  sinDatos: { color: '#8B8D97', fontSize: 12 },
+  legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 6 },
+  legendItem: { color: '#8B8D97', fontSize: 9 },
+  label: { color: '#8B8D97', fontSize: 12, marginBottom: 8, marginTop: 8 },
+  input: { backgroundColor: '#2A2B31', borderRadius: 10, padding: 12, color: '#ECE8DE', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  sugerencia: { color: '#8B8D97', padding: 10, fontSize: 13 },
+  notebookSheet: { borderRadius: 12, padding: 16, marginBottom: 14, borderWidth: 1 },
+  noteExercise: { paddingVertical: 10, borderTopWidth: 1, marginTop: 4 },
+  noteExerciseHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  noteSerieGroup: { marginBottom: 10 },
+  noteSerieLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  noteBlank: { borderRadius: 8, padding: 6, textAlign: 'center' },
+  noteBlankSmall: { borderRadius: 8, padding: 6, textAlign: 'center' },
+  noteText: {},
+});
