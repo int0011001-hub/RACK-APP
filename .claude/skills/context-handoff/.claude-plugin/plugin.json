@@ -1,0 +1,11 @@
+{
+  "name": "context-handoff",
+  "displayName": "Context Handoff",
+  "version": "1.0.0",
+  "description": "Maintains ARCHITECTURE.md and TASKS.md so a new chat can continue a project with zero memory loss.",
+  "author": { "name": "Devasurya", "url": "https://github.com/Devasurya05" },
+  "homepage": "https://github.com/Devasurya05/context-handoff",
+  "repository": "https://github.com/Devasurya05/context-handoff",
+  "license": "MIT",
+  "keywords": ["handoff", "context", "memory", "architecture", "documentation", "session-continuity"]
+}

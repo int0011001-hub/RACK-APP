@@ -14,11 +14,19 @@ export default function BottomNav({ active }: Props) {
 
   return (
     <View style={[styles.navbar, { paddingBottom: 14 + insets.bottom }]}>
-      <TouchableOpacity onPress={() => router.replace('/')}>
+      <TouchableOpacity
+        onPress={() => {
+          if (active !== 'home') router.replace('/');
+        }}
+      >
         <Ionicons name="home" size={22} color={active === 'home' ? accent : '#8B8D97'} />
       </TouchableOpacity>
 
-      <TouchableOpacity onPress={() => router.push('/musculos')}>
+      <TouchableOpacity
+        onPress={() => {
+          if (active !== 'musculos') router.replace('/musculos');
+        }}
+      >
         <Ionicons name="body" size={22} color={active === 'musculos' ? accent : 'rgba(139,141,151,0.4)'} />
       </TouchableOpacity>
 
@@ -30,7 +38,11 @@ export default function BottomNav({ active }: Props) {
         <Ionicons name="trophy" size={22} color="rgba(139,141,151,0.4)" />
       </TouchableOpacity>
 
-      <TouchableOpacity onPress={() => router.push('/perfil')}>
+      <TouchableOpacity
+        onPress={() => {
+          if (active !== 'perfil') router.replace('/perfil');
+        }}
+      >
         <Ionicons name="person" size={22} color={active === 'perfil' ? accent : 'rgba(139,141,151,0.4)'} />
       </TouchableOpacity>
     </View>

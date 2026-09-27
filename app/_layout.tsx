@@ -1,21 +1,24 @@
 import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider } from '../lib/theme';
-
-const queryClient = new QueryClient();
 
 export default function RootLayout() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-    <SafeAreaProvider>
-      <QueryClientProvider client={queryClient}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#17181B' }}>
+      <SafeAreaProvider style={{ flex: 1, backgroundColor: '#17181B' }}>
+        <StatusBar style="light" />
         <ThemeProvider>
-          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#17181B' } }} />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: '#17181B' },
+              animation: 'fade',
+            }}
+          />
         </ThemeProvider>
-      </QueryClientProvider>
-    </SafeAreaProvider>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

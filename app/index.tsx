@@ -3,14 +3,17 @@ import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, FlatList, 
 import { Redirect, router, useFocusEffect } from 'expo-router';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { useTheme } from '../lib/theme';
 import BottomNav from '../components/BottomNav';
 
 type Rutina = { id: string; titulo: string };
 
 export default function Index() {
+  const { accent } = useTheme();
   const [session, setSession] = useState<Session | null>(null);
   const [tieneNombre, setTieneNombre] = useState<boolean | null>(null);
   const [cargando, setCargando] = useState(true);
+  const [rutinasCargadas, setRutinasCargadas] = useState(false);
   const [rutinas, setRutinas] = useState<Rutina[]>([]);
 
   useEffect(() => {
@@ -18,12 +21,13 @@ export default function Index() {
       const { data } = await supabase.auth.getSession();
       setSession(data.session);
       if (data.session) {
-        const { data: perfil } = await supabase
-          .from('profiles')
-          .select('nombre')
-          .eq('id', data.session.user.id)
-          .single();
-        setTieneNombre(!!perfil?.nombre);
+        const [perfilRes, rutinasRes] = await Promise.all([
+          supabase.from('profiles').select('nombre').eq('id', data.session.user.id).single(),
+          supabase.from('rutina').select('id, titulo').eq('usuario_id', data.session.user.id).order('created_at', { ascending: true }),
+        ]);
+        setTieneNombre(!!perfilRes.data?.nombre);
+        setRutinas(rutinasRes.data ?? []);
+        setRutinasCargadas(true);
       }
       setCargando(false);
     }
@@ -43,12 +47,15 @@ export default function Index() {
       .eq('usuario_id', session.user.id)
       .order('created_at', { ascending: true });
     setRutinas(data ?? []);
+    setRutinasCargadas(true);
   }, [session]);
 
   useFocusEffect(
     useCallback(() => {
-      cargarRutinas();
-    }, [cargarRutinas])
+      if (session) {
+        cargarRutinas();
+      }
+    }, [session, cargarRutinas])
   );
 
   async function confirmarBorrarRutina(id: string, titulo: string) {
@@ -85,13 +92,21 @@ export default function Index() {
   if (cargando) {
     return (
       <View style={styles.loading}>
-        <ActivityIndicator color="#E1483C" />
+        <ActivityIndicator color={accent} />
       </View>
     );
   }
 
   if (!session) return <Redirect href="/login" />;
   if (!tieneNombre) return <Redirect href="/onboarding" />;
+
+  if (!rutinasCargadas) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator color={accent} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>

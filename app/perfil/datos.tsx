@@ -32,7 +32,12 @@ export default function DatosBasicos() {
 
   async function guardarCampo(campo: string, valor: string, esNumero: boolean) {
     if (!userId) return;
-    await supabase.from('profiles').update({ [campo]: esNumero ? (valor ? Number(valor) : null) : valor }).eq('id', userId);
+    let valorFinal: any = valor;
+    if (esNumero) {
+      const v = valor.trim().replace(',', '.');
+      valorFinal = v && !isNaN(Number(v)) ? Number(v) : null;
+    }
+    await supabase.from('profiles').update({ [campo]: valorFinal }).eq('id', userId);
   }
 
   return (

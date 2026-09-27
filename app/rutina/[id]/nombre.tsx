@@ -16,7 +16,9 @@ export default function NombreRutina() {
 
   function actualizarTitulo(valor: string) {
     setTitulo(valor);
-    supabase.from('rutina').update({ titulo: valor }).eq('id', id).then();
+    supabase.from('rutina').update({ titulo: valor }).eq('id', id).then(undefined, (err) => {
+      console.warn('Error al actualizar título:', err);
+    });
   }
 
   async function volver() {

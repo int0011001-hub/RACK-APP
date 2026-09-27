@@ -33,13 +33,18 @@ export default function Onboarding() {
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData.user?.id;
     if (userId) {
-      await supabase.from('profiles').update({
-        nombre: datos.nombre,
-        peso: datos.peso ? Number(datos.peso) : null,
-        edad: datos.edad ? Number(datos.edad) : null,
-        altura: datos.altura ? Number(datos.altura) : null,
+      const parsearNum = (val: string) => {
+        const v = val.trim().replace(',', '.');
+        return v && !isNaN(Number(v)) ? Number(v) : null;
+      };
+      await supabase.from('profiles').upsert({
+        id: userId,
+        nombre: datos.nombre.trim(),
+        peso: parsearNum(datos.peso),
+        edad: parsearNum(datos.edad),
+        altura: parsearNum(datos.altura),
         nivel: datos.nivel,
-      }).eq('id', userId);
+      });
     }
         setGuardando(false);
     router.replace({ pathname: '/welcome', params: { nombre: datos.nombre } });

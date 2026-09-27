@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { View, Text, Switch, TouchableOpacity, StyleSheet } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import DraggableFlatList, { RenderItemParams, ScaleDecorator } from 'react-native-draggable-flatlist';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../../lib/supabase';
 import { useTheme } from '../../../lib/theme';
 
@@ -17,6 +18,7 @@ export default function EditorRutina() {
   const { accent } = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [mostrarRir, setMostrarRir] = useState(true);
+  const [mostrarTipoSerie, setMostrarTipoSerie] = useState(true);
   const [tamanoHoja, setTamanoHoja] = useState<'compacto' | 'normal' | 'grande'>('normal');
   const [dias, setDias] = useState<Dia[]>([]);
 
@@ -27,9 +29,18 @@ export default function EditorRutina() {
   );
 
   async function cargar() {
-    const { data: rutina } = await supabase.from('rutina').select('mostrar_rir, tamano_hoja').eq('id', id).single();
+    const { data: rutina } = await supabase.from('rutina').select('*').eq('id', id).single();
     setMostrarRir(rutina?.mostrar_rir ?? true);
     setTamanoHoja((rutina?.tamano_hoja as any) ?? 'normal');
+
+    const localTipoSerie = await AsyncStorage.getItem(`mostrar_tipo_serie_${id}`);
+    if (rutina?.mostrar_tipo_serie !== undefined) {
+      setMostrarTipoSerie(rutina.mostrar_tipo_serie);
+    } else if (localTipoSerie !== null) {
+      setMostrarTipoSerie(localTipoSerie === 'true');
+    } else {
+      setMostrarTipoSerie(true);
+    }
 
     const { data: diasData } = await supabase.from('dia').select('id, nombre, orden').eq('rutina_id', id).order('orden');
     setDias(diasData ?? []);
@@ -38,6 +49,16 @@ export default function EditorRutina() {
   async function toggleRir(valor: boolean) {
     setMostrarRir(valor);
     await supabase.from('rutina').update({ mostrar_rir: valor }).eq('id', id);
+  }
+
+  async function toggleTipoSerie(valor: boolean) {
+    setMostrarTipoSerie(valor);
+    await AsyncStorage.setItem(`mostrar_tipo_serie_${id}`, String(valor));
+    try {
+      await supabase.from('rutina').update({ mostrar_tipo_serie: valor }).eq('id', id);
+    } catch {
+      // Ignorar si la columna aún no está en Supabase
+    }
   }
 
   async function elegirTamano(t: 'compacto' | 'normal' | 'grande') {
@@ -72,6 +93,14 @@ export default function EditorRutina() {
                   <Text style={styles.rowDesc}>Añade un campo para anotar cuántas repeticiones te quedaban en el tanque.</Text>
                 </View>
                 <Switch value={mostrarRir} onValueChange={toggleRir} trackColor={{ false: '#17181B', true: accent }} thumbColor="#ECE8DE" />
+              </View>
+
+              <View style={[styles.row, { marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowTitle}>Seleccionar tipo de serie</Text>
+                  <Text style={styles.rowDesc}>Permite elegir entre serie recta o multi-tramo (drop sets, rest-pause, etc.).</Text>
+                </View>
+                <Switch value={mostrarTipoSerie} onValueChange={toggleTipoSerie} trackColor={{ false: '#17181B', true: accent }} thumbColor="#ECE8DE" />
               </View>
             </View>
 
