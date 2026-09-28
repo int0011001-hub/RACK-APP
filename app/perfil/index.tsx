@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Alert, Image } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { decode } from 'base64-arraybuffer';
 import { supabase } from '../../lib/supabase';
@@ -8,7 +9,7 @@ import BottomNav from '../../components/BottomNav';
 import { useTheme } from '../../lib/theme';
 
 export default function Perfil() {
-  const { accent } = useTheme();
+  const { accent, bg, surface, border } = useTheme();
   const [nombre, setNombre] = useState('');
   const [handle, setHandle] = useState('');
   const [bio, setBio] = useState('');
@@ -140,8 +141,8 @@ export default function Perfil() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled">
-        <TouchableOpacity style={styles.cover} onPress={() => subirImagen('cover')}>
+      <ScrollView style={[styles.container, { backgroundColor: bg }]} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled">
+        <TouchableOpacity style={[styles.cover, { backgroundColor: surface }]} onPress={() => subirImagen('cover')}>
           {fondoUrl && <Image source={{ uri: fondoUrl }} style={StyleSheet.absoluteFill} />}
           <Text style={styles.coverEditText}>🖼 Cambiar fondo</Text>
         </TouchableOpacity>
@@ -171,7 +172,7 @@ export default function Perfil() {
             </Text>
           </View>
 
-          <View style={styles.handleRow}>
+          <View style={[styles.handleRow, { backgroundColor: surface, borderColor: border }]}>
             <Text style={styles.at}>@</Text>
             <TextInput
               style={styles.handleInput}
@@ -186,7 +187,7 @@ export default function Perfil() {
             {handleMsg}
           </Text>
 
-          <View style={styles.section}>
+          <View style={[styles.section, { backgroundColor: surface, borderColor: border }]}>
             <Text style={styles.sectionTitle}>Sobre mí</Text>
             <TextInput
               style={styles.bioInput}
@@ -201,22 +202,23 @@ export default function Perfil() {
           </View>
 
         <Text style={styles.sectionTitle}>Ajustes</Text>
-        <View style={styles.settingsList}>
+        <View style={[styles.settingsList, { backgroundColor: surface, borderColor: border }]}>
           <Text style={styles.settingsRow} onPress={() => router.push('/perfil/datos')}>
             Datos básicos  ›
           </Text>
-          <Text style={[styles.settingsRow, { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }]} onPress={() => router.push('/perfil/apariencia')}>
+          <Text style={[styles.settingsRow, { borderTopWidth: 1, borderTopColor: border }]} onPress={() => router.push('/perfil/apariencia')}>
             Apariencia  ›
           </Text>
-          <Text style={[styles.settingsRow, { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }]} onPress={() => router.push('/perfil/estilo')}>
+          <Text style={[styles.settingsRow, { borderTopWidth: 1, borderTopColor: border }]} onPress={() => router.push('/perfil/estilo')}>
             Estilo de registro  ›
           </Text>
-          <Text style={[styles.settingsRow, { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }]} onPress={() => router.push('/perfil/hoja')}>
+          <Text style={[styles.settingsRow, { borderTopWidth: 1, borderTopColor: border }]} onPress={() => router.push('/perfil/hoja')}>
             Estilo de hoja  ›
           </Text>
         </View>
 
-          <TouchableOpacity style={styles.signOutButton} onPress={confirmarCerrarSesion}>
+          <TouchableOpacity style={styles.signOutButton} onPress={confirmarCerrarSesion} activeOpacity={0.8}>
+            <Ionicons name="log-out-outline" size={17} color="#FF3B30" style={{ marginRight: 8 }} />
             <Text style={styles.signOutText}>Cerrar sesión</Text>
           </TouchableOpacity>
         </View>
@@ -266,6 +268,17 @@ const styles = StyleSheet.create({
   counter: { color: '#8B8D97', fontSize: 10, textAlign: 'right', marginTop: 4 },
   settingsList: { backgroundColor: '#2A2B31', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
   settingsRow: { color: '#ECE8DE', fontSize: 13, fontWeight: '500', padding: 14 },
-  signOutButton: { marginTop: 20, alignItems: 'center', paddingVertical: 12 },
-  signOutText: { color: '#E1483C', fontSize: 13, fontWeight: '600' },
+  signOutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 24,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 59, 48, 0.45)',
+    backgroundColor: 'rgba(255, 59, 48, 0.08)',
+  },
+  signOutText: { color: '#FF3B30', fontSize: 14, fontWeight: '700' },
 });

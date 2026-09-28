@@ -4,7 +4,9 @@ import { useState, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../../lib/supabase';
 import { useTheme } from '../../../lib/theme';
@@ -36,7 +38,7 @@ const TIPOS_SERIE: { value: TipoSerie; label: string }[] = [
 ];
 
 export default function RutinaDetalle() {
-  const { accent } = useTheme();
+  const { accent, bg, surface, border } = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [titulo, setTitulo] = useState('');
   const [dias, setDias] = useState<Dia[]>([]);
@@ -258,6 +260,11 @@ export default function RutinaDetalle() {
     if (!limpio) return;
     await supabase.from('dia').update({ nombre: limpio }).eq('id', diaId);
     setDias((prev) => prev.map((d) => (d.id === diaId ? { ...d, nombre: limpio } : d)));
+  }
+
+  async function onDragEndDias({ data }: { data: Dia[] }) {
+    setDias(data);
+    await Promise.all(data.map((d, i) => supabase.from('dia').update({ orden: i + 1 }).eq('id', d.id)));
   }
 
   async function confirmarBorrarDia(diaId: string, nombre: string) {
@@ -915,7 +922,7 @@ export default function RutinaDetalle() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
     >
       <ScrollView
-        style={styles.container}
+        style={[styles.container, { backgroundColor: bg }]}
         contentContainerStyle={{ padding: 20, paddingTop: 60, paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
@@ -923,7 +930,23 @@ export default function RutinaDetalle() {
           <Text style={styles.back}>← Volver</Text>
         </TouchableOpacity>
 
-        <View style={styles.titleRow}>
+        {/* Portada de la Rutina */}
+        <View style={styles.portadaContainer}>
+          <View style={styles.portadaTopRow}>
+            <View style={styles.portadaTagWrap}>
+              <View style={[styles.portadaDot, { backgroundColor: accent }]} />
+              <Text style={[styles.portadaTag, { color: accent }]}>RUTINA</Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.editorBtn, { borderColor: border, backgroundColor: surface }]}
+              onPress={() => router.push(`/rutina/${id}/editor`)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="options-outline" size={15} color="#ECE8DE" />
+              <Text style={styles.editorBtnText}>Ajustes</Text>
+            </TouchableOpacity>
+          </View>
+
           {editandoTitulo ? (
             <TextInput
               style={styles.titleInput}
@@ -934,44 +957,75 @@ export default function RutinaDetalle() {
               onSubmitEditing={() => { setEditandoTitulo(false); renombrarTitulo(tituloTemp); }}
             />
           ) : (
-            <Text style={styles.title} onPress={() => { setTituloTemp(titulo); setEditandoTitulo(true); }}>
-              {titulo.trim() || 'Rutina sin título'}
-            </Text>
+            <TouchableOpacity
+              onPress={() => { setTituloTemp(titulo); setEditandoTitulo(true); }}
+              activeOpacity={0.85}
+              style={styles.titleTouch}
+            >
+              <Text style={styles.title} numberOfLines={2}>
+                {titulo.trim() || 'Rutina sin título'}
+              </Text>
+              <Ionicons name="pencil-sharp" size={15} color="#8B8D97" style={{ marginTop: 6, marginLeft: 8 }} />
+            </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={() => router.push(`/rutina/${id}/editor`)}>
-            <Text style={styles.editIcon}>⚙</Text>
-          </TouchableOpacity>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.diasRow}>
-          {dias.map((d) => (
-            <View key={d.id} style={[styles.chip, diaActivoId === d.id && { backgroundColor: accent, borderColor: accent }]}>
-              {editandoDiaId === d.id ? (
-                <TextInput
-                  style={styles.chipInput}
-                  value={nombreDiaTemp}
-                  onChangeText={setNombreDiaTemp}
-                  autoFocus
-                  onBlur={() => { setEditandoDiaId(null); renombrarDia(d.id, nombreDiaTemp); }}
-                  onSubmitEditing={() => { setEditandoDiaId(null); renombrarDia(d.id, nombreDiaTemp); }}
-                />
-              ) : (
+        <View style={styles.diasRow}>
+          <DraggableFlatList
+            horizontal
+            data={dias}
+            keyExtractor={(item) => item.id}
+            onDragEnd={onDragEndDias}
+            showsHorizontalScrollIndicator={false}
+            renderItem={({ item: d, drag, isActive }: RenderItemParams<Dia>) => (
+              <ScaleDecorator>
                 <TouchableOpacity
-                  onPress={() => seleccionarDia(d.id)}
-                  onLongPress={() => { setNombreDiaTemp(d.nombre); setEditandoDiaId(d.id); }}
+                  activeOpacity={0.85}
+                  onLongPress={drag}
+                  disabled={isActive}
+                  onPress={() => {
+                    if (diaActivoId === d.id) {
+                      setNombreDiaTemp(d.nombre);
+                      setEditandoDiaId(d.id);
+                    } else {
+                      seleccionarDia(d.id);
+                    }
+                  }}
+                  style={[
+                    styles.chip,
+                    diaActivoId === d.id && { backgroundColor: accent, borderColor: accent },
+                    isActive && { opacity: 0.9, transform: [{ scale: 1.08 }] },
+                  ]}
                 >
-                  <Text style={[styles.chipText, diaActivoId === d.id && styles.chipTextActiva]}>{d.nombre}</Text>
+                  {editandoDiaId === d.id ? (
+                    <TextInput
+                      style={styles.chipInput}
+                      value={nombreDiaTemp}
+                      onChangeText={setNombreDiaTemp}
+                      autoFocus
+                      onBlur={() => { setEditandoDiaId(null); renombrarDia(d.id, nombreDiaTemp); }}
+                      onSubmitEditing={() => { setEditandoDiaId(null); renombrarDia(d.id, nombreDiaTemp); }}
+                    />
+                  ) : (
+                    <Text style={[styles.chipText, diaActivoId === d.id && styles.chipTextActiva]}>{d.nombre}</Text>
+                  )}
+                  <TouchableOpacity onPress={() => confirmarBorrarDia(d.id, d.nombre)} style={{ marginLeft: 6 }}>
+                    <Text style={[styles.chipDelete, diaActivoId === d.id && { color: '#fff' }]}>×</Text>
+                  </TouchableOpacity>
                 </TouchableOpacity>
-              )}
-              <TouchableOpacity onPress={() => confirmarBorrarDia(d.id, d.nombre)} style={{ marginLeft: 6 }}>
-                <Text style={[styles.chipDelete, diaActivoId === d.id && { color: '#fff' }]}>×</Text>
+              </ScaleDecorator>
+            )}
+            ListFooterComponent={
+              <TouchableOpacity
+                style={[styles.chip, styles.chipAdd, { borderColor: accent }]}
+                onPress={anadirDia}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.chipAddText, { color: accent }]}>+</Text>
               </TouchableOpacity>
-            </View>
-          ))}
-          <TouchableOpacity style={[styles.chip, styles.chipAdd, { borderColor: accent }]} onPress={anadirDia}>
-            <Text style={[styles.chipAddText, { color: accent }]}>+</Text>
-          </TouchableOpacity>
-        </ScrollView>
+            }
+          />
+        </View>
 
         {estiloRegistro === 'acordeon' && !diaCargado && (
           <Text style={styles.sinDatos}>Cargando...</Text>
@@ -1161,12 +1215,13 @@ export default function RutinaDetalle() {
                 <TouchableOpacity
                   style={[
                     styles.progresoBtn,
-                    progresoAbierto === e.id && { borderColor: accent, backgroundColor: `${accent}18` },
+                    { borderColor: accent },
+                    progresoAbierto === e.id && { backgroundColor: `${accent}18` },
                   ]}
                   onPress={() => toggleProgreso(e)}
                 >
-                  <Text style={[styles.progresoBtnText, progresoAbierto === e.id && { color: accent }]}>
-                    {progresoAbierto === e.id ? 'Ocultar progreso ▴' : 'Ver progreso ▾'}
+                  <Text style={[styles.progresoBtnText, { color: accent }]}>
+                    {progresoAbierto === e.id ? 'Ocultar progreso' : 'Ver progreso'}
                   </Text>
                 </TouchableOpacity>
 
@@ -1309,13 +1364,13 @@ export default function RutinaDetalle() {
                 <TouchableOpacity
                   style={[
                     styles.progresoBtn,
-                    { borderColor: hojaBorder, backgroundColor: hojaBlankBg },
-                    progresoAbierto === e.id && { borderColor: accent },
+                    { borderColor: accent, backgroundColor: hojaBlankBg },
+                    progresoAbierto === e.id && { backgroundColor: `${accent}18` },
                   ]}
                   onPress={() => toggleProgreso(e)}
                 >
-                  <Text style={[styles.progresoBtnText, { color: progresoAbierto === e.id ? accent : hojaMuted }]}>
-                    {progresoAbierto === e.id ? 'Ocultar progreso ▴' : 'Ver progreso ▾'}
+                  <Text style={[styles.progresoBtnText, { color: accent }]}>
+                    {progresoAbierto === e.id ? 'Ocultar progreso' : 'Ver progreso'}
                   </Text>
                 </TouchableOpacity>
 
@@ -1336,10 +1391,16 @@ export default function RutinaDetalle() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#17181B' },
   back: { color: '#8B8D97', fontSize: 14, marginBottom: 20 },
-  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  title: { color: '#ECE8DE', fontSize: 20, fontWeight: '900', flex: 1 },
-  titleInput: { color: '#ECE8DE', fontSize: 20, fontWeight: '900', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.15)', padding: 0, flex: 1 },
-  editIcon: { color: '#8B8D97', fontSize: 18, marginLeft: 10 },
+  portadaContainer: { marginBottom: 20, marginTop: 4 },
+  portadaTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  portadaTagWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  portadaDot: { width: 6, height: 6, borderRadius: 3 },
+  portadaTag: { fontSize: 10, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase' },
+  editorBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16, borderWidth: 1 },
+  editorBtnText: { color: '#ECE8DE', fontSize: 11, fontWeight: '600' },
+  titleTouch: { flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap' },
+  title: { color: '#ECE8DE', fontSize: 28, fontWeight: '900', letterSpacing: -0.6, lineHeight: 34, flexShrink: 1 },
+  titleInput: { color: '#ECE8DE', fontSize: 28, fontWeight: '900', letterSpacing: -0.6, borderBottomWidth: 2, borderBottomColor: 'rgba(255,255,255,0.3)', paddingVertical: 2, marginBottom: 4 },
   diasRow: { marginBottom: 16 },
   chip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', marginRight: 8 },
   chipDelete: { color: '#8B8D97', fontSize: 13 },
@@ -1377,7 +1438,7 @@ const styles = StyleSheet.create({
   addSerieBtn: { marginTop: 4 },
   addSerieText: { fontSize: 12, textAlign: 'center', fontWeight: '600' },
   addExerciseButton: { fontSize: 13, fontWeight: '700' },
-  progresoBtn: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: '#1E1F24', marginTop: 10, marginBottom: 6 },
+  progresoBtn: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 0, borderWidth: 1, borderColor: '#FF3B53', backgroundColor: '#1E1F24', marginTop: 10, marginBottom: 6 },
   progresoBtnText: { color: '#8B8D97', fontSize: 11, fontWeight: '600' },
   progresoCard: { backgroundColor: '#17181B', borderRadius: 10, padding: 10, marginTop: 4 },
   metricaRow: { flexDirection: 'row', gap: 6, marginBottom: 6 },
